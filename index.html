@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Módulo 01 · Contador de dedos con MediaPipe</title>
+<style>
+  html,body{margin:0;height:100%;background:#0c0d10;color:#ecedef;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;box-sizing:border-box}
+  h1{margin:0;font-size:22px;letter-spacing:.06em}
+  p{margin:0;color:#9a9ea8;font-size:14px;text-align:center;max-width:52ch;line-height:1.5}
+  .stage{position:relative;width:min(640px,92vw);aspect-ratio:4/3;border-radius:16px;overflow:hidden;border:1px solid #2a2c33;background:#000}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  #count{position:absolute;top:12px;left:14px;font-size:64px;font-weight:800;line-height:1;color:#ffd166;text-shadow:0 2px 12px rgba(0,0,0,.6)}
+  #gesture{position:absolute;top:84px;left:16px;font-size:14px;letter-spacing:.12em;color:#fff;background:rgba(0,0,0,.45);padding:4px 10px;border-radius:999px}
+  button{font:inherit;font-weight:700;border:0;border-radius:999px;padding:12px 24px;background:#ffd166;color:#1a1300;cursor:pointer}
+  video{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CONTADOR DE DEDOS · MEDIAPIPE</h1>
+  <p>Ejercicio del Módulo 01 (Interacción natural y visión por computadora). Muestra tu mano a la cámara: MediaPipe detecta 21 puntos, dibuja el esqueleto y cuenta cuántos dedos están levantados.</p>
+  <div class="stage">
+    <canvas id="out" width="640" height="480"></canvas>
+    <div id="count">–</div>
+    <div id="gesture">ESPERANDO MANO</div>
+  </div>
+  <button id="go">Activar cámara</button>
+  <p id="status"></p>
+</div>
+<video id="video" playsinline muted></video>
+
+<script type="module">
+const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const $ = id => document.getElementById(id);
+const video = $('video'), out = $('out'), g = out.getContext('2d');
+const LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const NAMES = { 0:'PUÑO', 1:'UNO', 2:'PAZ', 3:'TRES', 4:'CUATRO', 5:'MANO ABIERTA' };
+let landmarker, lastTime = -1;
+
+// cuenta dedos: punta más lejos de la muñeca que la articulación media; el pulgar se compara en x
+function countFingers(lm, handed){
+  let n = 0;
+  [[8,6],[12,10],[16,14],[20,18]].forEach(([tip, pip]) => { if (lm[tip].y < lm[pip].y) n++; });
+  const right = handed === 'Right';
+  if (right ? lm[4].x < lm[3].x : lm[4].x > lm[3].x) n++;
+  return n;
+}
+
+function loop(now){
+  if (video.readyState >= 2){
+    g.save(); g.translate(out.width, 0); g.scale(-1, 1); g.drawImage(video, 0, 0, out.width, out.height); g.restore();
+    if (video.currentTime !== lastTime){
+      lastTime = video.currentTime;
+      const res = landmarker.detectForVideo(video, now);
+      const lm = res.landmarks?.[0];
+      if (lm){
+        const X = p => (1 - p.x) * out.width, Y = p => p.y * out.height;
+        g.strokeStyle = '#ffd166'; g.lineWidth = 4; g.lineCap = 'round';
+        LINKS.forEach(([a, b]) => { g.beginPath(); g.moveTo(X(lm[a]), Y(lm[a])); g.lineTo(X(lm[b]), Y(lm[b])); g.stroke(); });
+        lm.forEach((p, i) => { g.fillStyle = [4,8,12,16,20].includes(i) ? '#ff5d8f' : '#ffffff'; g.beginPath(); g.arc(X(p), Y(p), 5, 0, 7); g.fill(); });
+        const handed = res.handednesses?.[0]?.[0]?.categoryName;   // la cámara está en espejo
+        const n = countFingers(lm, handed);
+        $('count').textContent = n; $('gesture').textContent = NAMES[n];
+      } else { $('count').textContent = '–'; $('gesture').textContent = 'ESPERANDO MANO'; }
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+$('go').onclick = async () => {
+  $('go').disabled = true; $('status').textContent = 'Cargando modelo…';
+  try{
+    const { FilesetResolver, HandLandmarker } = await import(MP);
+    const files = await FilesetResolver.forVisionTasks(MP + "/wasm");
+    landmarker = await HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate: "GPU" },
+      runningMode: "VIDEO", numHands: 1
+    });
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+    await video.play();
+    $('status').textContent = ''; $('go').style.display = 'none';
+    requestAnimationFrame(loop);
+  }catch(e){ $('status').textContent = 'No se pudo iniciar: ' + e.message; $('go').disabled = false; }
+};
+</script>
+</body>
+</html>
